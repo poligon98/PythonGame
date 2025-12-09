@@ -31,6 +31,7 @@ FPS = 60  # FPS = Frames Per Second (how many times we redraw the screen per sec
 WHITE = (255, 255, 255)  # All colors at max = white
 BLACK = (0, 0, 0)  # All colors at zero = black
 SKY_BLUE = (20, 130, 200)  # A nice sky blue color
+YELLOW = (200, 200, 0)
 GROUND_COLOR = (50, 50, 50)  # Dark gray for the ground
 PLAYER_COLOR = (255, 200, 50)  # Yellow/orange for the player
 OBSTACLE_COLOR = (200, 50, 50)  # Red for obstacles
@@ -43,6 +44,9 @@ HITBOX_COLOR = (255, 0, 0)  # Bright red for hitboxes (collision boxes)
 GROUND_Y = 450  # Where the ground starts (y coordinate - remember y goes down!)
 GRAVITY = 3000  # How strong gravity is (bigger number = stronger gravity)
 JUMP_VELOCITY = -1000  # How fast the player jumps up (negative = up, positive = down)
+##############################################################################
+JUMP_PAD_VELOCITY = -1500 # The jumping when the player touch the jump pad
+##############################################################################
 GAME_SPEED = 450.0 # How fast the obstacles shift
 # Platform Constants
 PLATFORM_HEIGHT = 20  # Thickness of each floating platform
@@ -66,6 +70,9 @@ def try_load(path):
 PLAYER_IMG = try_load("player.png")
 GROUND_IMG = try_load("ground.png")
 TRIANGLE_IMG = try_load("triangle.png")
+##########################################
+JUMP_PAD_IMG = try_load("jump_pad.png")
+##########################################
 
 # ============================================================================
 # STEP 6: UTILS FUNCTION
@@ -105,11 +112,13 @@ class Player:
         else:
             self.image = None  # No image, so we'll draw a shape instead
 
-    def jump(self):
+    #########################################################################
+    def jump(self, velocity: int):
         # Jump when the player is on the ground
         if self.on_ground:  # Only jump if we're touching the ground
-            self.vel_y = JUMP_VELOCITY  # Set upward velocity (negative = up)
+            self.vel_y = velocity  # Set upward velocity (negative = up)
             self.on_ground = False  # We're now in the air
+    #########################################################################
 
     def update(self, dt, game=None, platforms=None):
         # What we do to the player for every frame
@@ -235,6 +244,22 @@ class Platform(GameObject):
         super().update(dt) # don't override
         self.rect.x = int(self.pos.x)
 
+##########################################################################################
+class JumpPad(GameObject):
+    def __init__(self, pos: Vector2, size: Vector2):
+        self.rect = pygame.Rect(int(pos.x), int(pos.y), size.x, size.y)  # Hitbox
+        # Use image if found otherwise create a rectangle
+        if JUMP_PAD_IMG:
+            image = pygame.transform.scale(JUMP_PAD_IMG, (size.x, size.y))
+        else:
+            image = ["Rectangle", self.rect, YELLOW]
+        super().__init__(pos, size, image)
+
+    def update(self, dt):
+        super().update(dt) # don't override
+        self.rect.x = int(self.pos.x)
+##########################################################################################
+
 # ============================================================================
 # STEP 11: MANAGING GAME OBJECTS
 # ============================================================================
@@ -254,11 +279,14 @@ class ObjectManager:
         next_type = self.pattern[0]
         self.pattern.rotate(-1)  # alternate spike -> platform -> spike ...
         if next_type == "spike":
-            game.obstacles.append(self._spawn_spike())
+            ################################################################
+            game.game_objects["obstacles"].append(self._spawn_spike())
         else:
-            platform_obj, spike_obj = self._spawn_platform()
-            game.platforms.append(platform_obj)
-            game.obstacles.append(spike_obj)
+            platform_obj, spike_obj, jump_pad_obj = self._spawn_platform()
+            game.game_objects["platforms"].append(platform_obj)
+            game.game_objects["obstacles"].append(spike_obj)
+            game.game_objects["jump_pads"].append(jump_pad_obj)
+            ################################################################
         # --- Reset timer with a little randomness but never below the minimum gap --- #
         extra_time = random.uniform(0.1, 0.5) * self.min_gap_time
         self.timer = self.min_gap_time + extra_time
@@ -274,7 +302,11 @@ class ObjectManager:
         width = random.randint(*PLATFORM_WIDTH_RANGE) # Randomise the width of the platform
         spike_width, spike_height = 50, 50 # Set the width and height of the spike
         spike_x = self.spawn_point_x + int(width * 0.45) # Set the spawn point of the spike underneath the platform
-        return Platform(self.spawn_point_x, GROUND_Y - 90, width, PLATFORM_HEIGHT), Spike(spike_x, spike_width, spike_height)
+        #######################################################################################
+        return Platform(self.spawn_point_x, GROUND_Y - 90, width, PLATFORM_HEIGHT), \
+               Spike(spike_x, spike_width, spike_height), JumpPad(Vector2(self.spawn_point_x - 30, GROUND_Y - 10), Vector2(40, 10))
+        ########################################################################################
+
 
 # ============================================================================
 # STEP 12: GROUND DRAWING
@@ -313,10 +345,16 @@ class Game:
     def __init__(self):
         # Create the player at position (80, GROUND_Y - 60) with size 60
         self.player = Player(80, GROUND_Y - 60, 60)
+        self.all_objs = []
 
+        ########################################################
         # Collections that store everything moving in the level
-        self.obstacles = []  # ground spikes/triangles
-        self.platforms = []  # floating bars the player can land on
+        self.game_objects = {
+            "obstacles": [], # ground spikes/triangles
+            "platforms": [],  # floating bars the player can land on
+            "jump_pads": []  # The point for the player to jump
+        } # Store all game objects
+        ########################################################
 
         # Dedicated manager that keeps spawn spacing fair
         self.obstacle_manager = ObjectManager()
@@ -334,8 +372,13 @@ class Game:
         # Create a new player
         self.player = Player(80, GROUND_Y - 60, 60)
         # Clear all obstacles and platforms
-        self.obstacles = []
-        self.platforms = []
+        ########################################################
+        self.game_objects = {
+            "obstacles": [],  # ground spikes/triangles
+            "platforms": [],  # floating bars the player can land on
+            "jump_pads": []  # The point for the player to jump
+        }  # Store all game objects
+        ########################################################
         # Reset score and spawn logic
         self.score = 0
         self.obstacle_manager = ObjectManager()
@@ -345,34 +388,42 @@ class Game:
         # ===== UPDATE PLAYER =====
         # Update player's physics (gravity, movement, etc.)
         # Pass platforms so player can land on them
-        self.player.update(dt, game=self, platforms=self.platforms)
+        self.player.update(dt, game=self, platforms=self.game_objects["platforms"])
 
         # ===== SPAWN LOGIC MANAGED IN ONE PLACE =====
         # The obstacle manager handles alternating spike / platform spawns
         self.obstacle_manager.update(dt, self)
 
+        ######################################################
         # ===== UPDATE ALL OBSTACLES =====
-        # Move each obstacle left across the screen
-        for ob in self.obstacles:
-            ob.update(dt)
+        self.all_objs = [
+            element
+            for value in self.game_objects.values()  # Iterate through all values
+            if isinstance(value, list)  # Filter to include only lists
+            for element in value  # Flatten the list and get each element
+        ]
 
-        # ===== UPDATE ALL PLATFORMS =====
-        # Move each platform left across the screen (and update its spikes)
-        for platform in self.platforms:
-            platform.update(dt)
+        # Move each object left across the screen
+        for obj in self.all_objs:
+            obj.update(dt)
 
         # ===== REMOVE OFF-SCREEN OBJECTS =====
         # If an obstacle has left the screen, remove it from the list
         # This keeps our list small and prevents lag
-        self.obstacles = [o for o in self.obstacles if not o.off_screen()]
-        # Remove off-screen platforms too
-        self.platforms = [p for p in self.platforms if not p.off_screen()]
-        # This is a "list comprehension" - it's like a for loop that creates a new list
-        # It keeps only obstacles/platforms that are still on screen
+        for li in self.game_objects.values():
+            # 2. Inner Loop: Iterate through the elements of the list
+            for obj in li:
+                if obj.off_screen():
+                    li.remove(obj)
+
+        # # Remove off-screen platforms too
+        # self.platforms = [p for p in self.platforms if not p.off_screen()]
+        # # This is a "list comprehension" - it's like a for loop that creates a new list
+        # # It keeps only obstacles/platforms that are still on screen
 
         # ===== CHECK COLLISIONS =====
         # Check if player hit any obstacle
-        for ob in self.obstacles:
+        for ob in self.game_objects["obstacles"]:
             px, py = self.player.rect.centerx, self.player.rect.bottom
             x1, y1 = ob.get_p1()
             x2, y2 = ob.get_p2()
@@ -388,6 +439,12 @@ class Game:
                     self.best = max(self.best, self.score)
                     self.running = False
                     return
+
+        # Check for jump pad collision
+        for jp in self.game_objects["jump_pads"]:
+            if self.player.rect.colliderect(jp.rect):
+                self.player.jump(JUMP_PAD_VELOCITY)
+        ####################################################
 
         # ===== UPDATE SCORE =====
         # Score increases over time (survive longer = higher score)
@@ -409,13 +466,11 @@ class Game:
         # Draw ground first (it's in the background)
         draw_ground(surf)
 
-        # Draw all platforms (platforms and their spikes)
-        for platform in self.platforms:
-            platform.draw(surf)
-
-        # Draw all obstacles
-        for ob in self.obstacles:
-            ob.draw(surf)
+        #######################################################
+        # Draw all objects
+        for obj in self.all_objs:
+            obj.draw(surf)
+        #######################################################
 
         # Draw player last (so it appears on top)
         self.player.draw(surf)
@@ -457,7 +512,9 @@ def main():
                     sys.exit()
                 elif event.key == pygame.K_SPACE:
                     # Space bar = jump!
-                    game.player.jump()
+                    #############################################
+                    game.player.jump(JUMP_VELOCITY)
+                    #############################################
                 elif event.key == pygame.K_h:
                     # H key = toggle hitboxes (show/hide collision boxes)
                     game.show_hitboxes = not game.show_hitboxes
